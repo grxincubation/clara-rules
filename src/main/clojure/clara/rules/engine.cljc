@@ -494,7 +494,9 @@
                                (str "with bindings\n  " bindings))
         message-header (string/join ["Condition exception raised.\n"
                                      "when processing fact\n"
-                                     (str "  " (pr-str fact) "\n")
+                                     (str "  " (->> (flatten [fact])
+                                                    (map pr-str)
+                                                    (string/join "\n  ")) "\n")
                                      (str bindings-description "\n")
                                      "Conditions:\n"])
         conditions-and-rules (get-conditions-and-rule-names node)
@@ -924,6 +926,17 @@
                              constraints)]
       [:not (into [type] full-constraints)])))
 
+(defn- test-node-matches
+  [node test env token]
+  (let [test-result (try
+                      (test token)
+                      (catch #?(:clj Exception :cljs :default) e
+                        (throw-condition-exception {:cause e
+                                                    :node node
+                                                    :env env
+                                                    :fact (keys (into {} (:matches token)))
+                                                    :bindings (:bindings token)})))]
+    test-result))
 
 ;; The test node represents a Rete extension in which an arbitrary test condition is run
 ;; against bindings from ancestor nodes. Since this node
@@ -937,7 +950,7 @@
      memory
      listener
      children
-     (filter test tokens)))
+     (filter (partial test-node-matches node test {}) tokens)))
 
   (left-retract [node join-bindings tokens memory transport listener]
     (l/left-retract! listener node tokens)
@@ -945,7 +958,11 @@
 
   (get-join-keys [node] [])
 
-  (description [node] (str "TestNode -- " (:text test))))
+  (description [node] (str "TestNode -- " (:text test)))
+
+  IConditionNode
+  (get-condition-description [this]
+    (into [:test] (:constraints (meta test)))))
 
 (defn- do-accumulate
   "Runs the actual accumulation.  Returns the accumulated value."
