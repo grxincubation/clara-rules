@@ -12,8 +12,9 @@
             [clojure.test :refer :all]
             [clara.rules.compiler :as com]
             [clara.tools.testing-utils :as tu])
-  (:import [clara.rules.testfacts
-            Temperature]))
+  (:import [clara.rules.testfacts Temperature]
+           [clara.rules.engine TestNode]))
+           
 
 (use-fixtures :once st/validate-schemas)
 
@@ -337,6 +338,29 @@
       (is (= init-qresults
              restored-qresults1
              restored-qresults2)))))
+
+(defn get-test-nodes
+  [session]
+  (->> session
+       eng/components
+       :rulebase
+       :id-to-node
+       vals
+       (filter (partial instance? TestNode))))
+
+(deftest test-durability-fressian-serde
+  (testing "Serde TestNode ICondition implementation to make sure it survives serialization and deserialization (it should)"
+    (let [s (mk-session 'clara.durability-rules)
+          rb (-> s eng/components :rulebase)
+          deserialized1 (rb-serde s nil)
+          ;; Need a session to do the 2nd round of SerDe.
+          restored1 (d/assemble-restored-session deserialized1 {})
+          deserialized2 (rb-serde restored1 nil)
+          restored2 (d/assemble-restored-session deserialized2 {})]
+      (is (= [[:test '(not-empty ?ts)]]
+             (map eng/get-condition-description (get-test-nodes s))
+             (map eng/get-condition-description (get-test-nodes restored1))
+             (map eng/get-condition-description (get-test-nodes restored2)))))))
 
 (deftest test-assemble-restored-session-opts
   (let [orig (mk-session 'clara.durability-rules)
