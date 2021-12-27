@@ -348,7 +348,7 @@
        vals
        (filter (partial instance? TestNode))))
 
-(deftest test-durability-fressian-serde
+(deftest test-durability-testnode-serde
   (testing "Serde TestNode ICondition implementation to make sure it survives serialization and deserialization (it should)"
     (let [s (mk-session 'clara.durability-rules)
           rb (-> s eng/components :rulebase)

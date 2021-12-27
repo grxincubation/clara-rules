@@ -927,9 +927,9 @@
       [:not (into [type] full-constraints)])))
 
 (defn- test-node-matches
-  [node test env token]
+  [node test-handler env token]
   (let [test-result (try
-                      (test token)
+                      (test-handler token)
                       (catch #?(:clj Exception :cljs :default) e
                         (throw-condition-exception {:cause e
                                                     :node node
@@ -950,7 +950,10 @@
      memory
      listener
      children
-     (filter (partial test-node-matches node test {}) tokens)))
+     (platform/eager-for
+      [token tokens
+       :when (test-node-matches node (:handler test) {} token)]
+      token)))
 
   (left-retract [node join-bindings tokens memory transport listener]
     (l/left-retract! listener node tokens)
@@ -962,7 +965,7 @@
 
   IConditionNode
   (get-condition-description [this]
-    (into [:test] (:constraints (meta test)))))
+    (into [:test] (:constraints test))))
 
 (defn- do-accumulate
   "Runs the actual accumulation.  Returns the accumulated value."

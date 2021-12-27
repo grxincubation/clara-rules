@@ -425,10 +425,8 @@
     `(let [handler# (fn ~fn-name [~'?__token__]
                       (let [~@assignments]
                         (and ~@constraints)))]
-       (with-meta handler#
-         {:name '~fn-name
-          :handler handler#
-          :constraints '~constraints}))))
+       {:handler handler#
+        :constraints '~constraints})))
 
 (defn compile-action
   "Compile the right-hand-side action of a rule, returning a function to execute it."

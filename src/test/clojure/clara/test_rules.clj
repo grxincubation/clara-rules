@@ -2364,7 +2364,7 @@
       (is (= {:?w 10, :?t nil}
              (-> e (ex-data) :bindings))))))
 
-(deftest test-local-scope-visible-in-test-filter
+(deftest test-include-details-when-exception-is-thrown-in-test-filter
   (let [check-exception (assoc (dsl/parse-query [] [[WindSpeed (= ?w windspeed)]
                                                     [Temperature (= ?t temperature)]
                                                     [:test (> ?t ?w)]])
