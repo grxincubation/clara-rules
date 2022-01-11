@@ -488,15 +488,15 @@
 
 (defn- throw-condition-exception
   "Adds a useful error message when executing a constraint node raises an exception."
-  [{:keys [cause node fact env bindings]}]
+  [{:keys [cause node fact env bindings] :as args}]
   (let [bindings-description (if (empty? bindings)
-                               "with no bindings\n"
+                               "with no bindings"
                                (str "with bindings\n  " bindings))
+        facts-description (if-not (contains? args :fact)
+                            "with no fact"
+                            (str "when processing fact\n " (pr-str fact)))
         message-header (string/join ["Condition exception raised.\n"
-                                     "when processing fact\n"
-                                     (str "  " (->> (flatten [fact])
-                                                    (map pr-str)
-                                                    (string/join "\n  ")) "\n")
+                                     (str facts-description "\n")
                                      (str bindings-description "\n")
                                      "Conditions:\n"])
         conditions-and-rules (get-conditions-and-rule-names node)
@@ -934,7 +934,6 @@
                         (throw-condition-exception {:cause e
                                                     :node node
                                                     :env env
-                                                    :fact (keys (into {} (:matches token)))
                                                     :bindings (:bindings token)})))]
     test-result))
 
