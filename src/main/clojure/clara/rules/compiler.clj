@@ -1027,7 +1027,8 @@
 (declare add-production)
 
 (sc/defn ^:private extract-negation :-  {:new-expression schema/Condition
-                                         :beta-with-negations schema/BetaGraph}
+                                         :beta-with-negations schema/BetaGraph
+                                         :production schema/Production}
 
   "Extracts complex, nested negations and adds a rule to the beta graph to trigger the returned
    negation expression."
@@ -1039,16 +1040,17 @@
    production :- schema/Production
    create-id-fn]
 
-  (if (and (= :not (first expression))
-           (sequential? (second expression))
-           (#{:and :or :not} (first (second expression))))
+  (cond
+    (and (= :not (first expression))
+         (sequential? (second expression))
+         (#{:and :or :not} (first (second expression))))
 
     ;; Dealing with a compound negation, so extract it out.
     (let [negation-expr (second expression)
-          gen-rule-name (str (or (:name production)
-                                 (gensym "gen-rule"))
-                             "__"
-                             (gensym))
+          production-with-name (cond-> production
+                                 (nil? (:name production))
+                                 (assoc :name (gensym (str "GenRule-" (create-id-fn) "-"))))
+          gen-rule-name (str (:name production) "-NegE-" (create-id-fn))
 
           ;; Insert the bindings from ancestors that are used in the negation
           ;; in the NegationResult fact so that the [:not [NegationResult...]]
@@ -1071,12 +1073,17 @@
                                                (list '= (-> b name symbol)
                                                      (list b 'ancestor-bindings)))
 
-          modified-expression `[:not {:type ~(if (compiling-cljs?)
-                                               'clara.rules.engine/NegationResult
-                                               'clara.rules.engine.NegationResult)
-                                      :constraints [(~'= ~gen-rule-name ~'gen-rule-name)
-                                                    ~@(map ancestor-binding->restriction-form
-                                                           ancestor-bindings-in-negation-expr)]}]
+          modified-expression `[:not [:or
+                                      {:type ~(if (compiling-cljs?)
+                                                'clara.rules.engine/NegationResult
+                                                'clara.rules.engine.NegationResult)
+                                       :constraints [(~'= ~gen-rule-name ~'gen-rule-name)
+                                                     ~@(map ancestor-binding->restriction-form
+                                                            ancestor-bindings-in-negation-expr)]}
+                                      {:type ~(if (compiling-cljs?)
+                                                'clara.rules.engine/ErrorResult
+                                                'clara.rules.engine.ErrorResult)
+                                       :constraints [(~'= ~gen-rule-name ~'gen-rule-name)]}]]
 
           generated-rule (cond-> {:name gen-rule-name
                                   :lhs (concat previous-expressions [negation-expr])
@@ -1095,13 +1102,53 @@
 
 
           beta-with-negations (add-production generated-rule beta-graph create-id-fn)]
-
       {:new-expression modified-expression
-       :beta-with-negations beta-with-negations})
+       :beta-with-negations beta-with-negations
+       :production production-with-name})
 
+    (= :not (first expression))
+    (let [negation-expr (second expression)
+          production-with-name (cond-> production
+                                 (nil? (:name production))
+                                 (assoc :name (gensym (str "GenRule-" (create-id-fn) "-"))))
+          gen-rule-name (str (:name production))
+
+          ;; Insert the bindings from ancestors that are used in the negation
+          ;; in the NegationResult fact so that the [:not [NegationResult...]]
+          ;; condition can assert that the facts matching the negation
+          ;; have the necessary bindings. 
+          ;; See https://github.com/cerner/clara-rules/issues/304 for more details
+          ;; and a case that behaves incorrectly without this check.
+          ancestor-bindings-in-negation-expr (set/intersection
+                                               (variables-as-keywords negation-expr)
+                                               ancestor-bindings)
+
+          ancestor-bindings-insertion-form (into {}
+                                                 (map (fn [binding]
+                                                        [binding (-> binding
+                                                                     name
+                                                                     symbol)]))
+                                                 ancestor-bindings-in-negation-expr)
+
+          ancestor-binding->restriction-form (fn [b]
+                                               (list '= (-> b name symbol)
+                                                     (list b 'ancestor-bindings)))
+
+          modified-expression `[:not [:or
+                                      ~negation-expr
+                                      {:type ~(if (compiling-cljs?)
+                                                'clara.rules.engine/ErrorResult
+                                                'clara.rules.engine.ErrorResult)
+                                       :constraints [(~'= ~gen-rule-name ~'gen-rule-name)]}]]]
+      {:new-expression modified-expression
+       :beta-with-negations beta-graph
+       :production production-with-name})
+
+    :else
     ;; The expression wasn't a negation, so return the previous content.
     {:new-expression expression
-     :beta-with-negations beta-graph}))
+     :beta-with-negations beta-graph
+     :production production}))
 
 ;; A beta graph with no nodes.
 (def ^:private empty-beta-graph {:forward-edges (sorted-map)
@@ -1231,7 +1278,7 @@
 
       (if current-condition
 
-        (let [{:keys [new-expression beta-with-negations]}
+        (let [{:keys [new-expression beta-with-negations production]}
               (extract-negation previous-conditions
                                 current-condition
                                 parent-ids

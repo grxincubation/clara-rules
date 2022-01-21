@@ -21,15 +21,21 @@
 (defrule negation-node-exception
   "Rule using NegationNode"
   [:not [Temperature (= temperature (throw (ex-info "fail" {:t temperature})))]]
-  [:not [ErrorResult (= rule-name ::negation-node-exception)]]
   =>
   (insert! (->ExceptionHandlerError "negation-node-exception rhs should never be triggered")))
+
+(defrule complex-nested-negation-node-exception
+  "Rule using NegationNode"
+  [:not [:and
+         [Temperature (= temperature (throw (ex-info "fail" {:t temperature})))]
+         [Temperature (= temperature (throw (ex-info "fail" {:t temperature})))]]]
+  =>
+  (insert! (->ExceptionHandlerError "complex-nested-negation-node-exception rhs should never be triggered")))
 
 (defrule negation-node-with-join-filter-node-exception
   "Rule using NegationWithJoinFilterNode"
   [Temperature (= temperature ?t)]
   [:not [Temperature (= temperature (throw (ex-info "fail" {:t ?t})))]]
-  [:not [ErrorResult (= rule-name ::negation-node-with-join-filter-node-exception)]]
   =>
   (insert! (->ExceptionHandlerError "negation-node-with-join-filter-node-exception rhs should never be triggered")))
 

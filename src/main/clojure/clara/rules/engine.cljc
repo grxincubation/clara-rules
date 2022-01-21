@@ -46,14 +46,14 @@
       (defrecord NegationResult [gen-rule-name ancestor-bindings]
         ISystemFact)
 
-      (defrecord ErrorResult [rule-name]
+      (defrecord ErrorResult [gen-rule-name]
         ISystemFact))
 
     :cljs
     (do
       (defrecord NegationResult [gen-rule-name ancestor-bindings])
 
-      (defrecord ErrorResult [rule-name])
+      (defrecord ErrorResult [gen-rule-name])
       ;; Make NegationResult and ErrorResult a "system type" so that NegationResult
       ;; facts are special-cased when matching productions. This serves
       ;; the same purpose as implementing the ISystemFact Java interface
@@ -555,7 +555,7 @@
        (vals)
        (reduce into [])
        (map second)
-       (map keyword)
+       (map str)
        (set)))
 
 (defn- alpha-node-matches
@@ -570,7 +570,8 @@
                                                    errors (map ->ErrorResult (production-names node))]
                                                (when (seq errors)
                                                  (insert-facts! errors false))
-                                               (handle-exception *exception-handler* ce))))]
+                                               (handle-exception *exception-handler* ce)
+                                               nil)))]
                        :when bindings]           ; FIXME: add env.
                       [fact bindings]))
 
@@ -732,7 +733,8 @@
                                    errors (map ->ErrorResult (production-names node))]
                                (when (seq errors)
                                  (insert-facts! errors false))
-                               (handle-exception *exception-handler* ce))))]
+                               (handle-exception *exception-handler* ce)
+                               nil)))]
     beta-bindings))
 
 (defrecord ExpressionJoinNode [id condition join-filter-fn children binding-keys]
@@ -993,7 +995,8 @@
                               errors (map ->ErrorResult (production-names node))]
                           (when (seq errors)
                             (insert-facts! errors false))
-                          (handle-exception *exception-handler* ce))))]
+                          (handle-exception *exception-handler* ce)
+                          nil)))]
     test-result))
 
 ;; The test node represents a Rete extension in which an arbitrary test condition is run
