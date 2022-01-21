@@ -114,7 +114,7 @@
   have a specific need, it is better to simply do inserts on the rule's right-hand side, and let
   Clara's underlying truth maintenance retract inserted items if their support becomes false."
   [& facts]
-  (eng/rhs-retract-facts! facts))
+  (eng/retract-facts! facts))
 
 (defn accumulate
   "DEPRECATED. Use clara.rules.accumulators/accum instead.
@@ -429,3 +429,9 @@ See the [query authoring documentation](http://www.clara-rules.org/docs/queries/
                                   )]
          (doseq [psym production-syms]
            (ns-unmap *ns* psym))))))
+
+#?(:clj
+   (defmacro with-exception-handler
+     [exception-handler & body]
+     `(binding [eng/*exception-handler* ~exception-handler]
+        ~@body)))
