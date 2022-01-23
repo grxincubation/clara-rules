@@ -1083,7 +1083,9 @@
                                       {:type ~(if (compiling-cljs?)
                                                 'clara.rules.engine/ErrorResult
                                                 'clara.rules.engine.ErrorResult)
-                                       :constraints [(~'= ~gen-rule-name ~'gen-rule-name)]}]]
+                                       :constraints [(~'= ~gen-rule-name ~'gen-rule-name)
+                                                     ~@(map ancestor-binding->restriction-form
+                                                            ancestor-bindings-in-negation-expr)]}]]
 
           generated-rule (cond-> {:name gen-rule-name
                                   :lhs (concat previous-expressions [negation-expr])
@@ -1123,13 +1125,6 @@
                                                (variables-as-keywords negation-expr)
                                                ancestor-bindings)
 
-          ancestor-bindings-insertion-form (into {}
-                                                 (map (fn [binding]
-                                                        [binding (-> binding
-                                                                     name
-                                                                     symbol)]))
-                                                 ancestor-bindings-in-negation-expr)
-
           ancestor-binding->restriction-form (fn [b]
                                                (list '= (-> b name symbol)
                                                      (list b 'ancestor-bindings)))
@@ -1139,7 +1134,9 @@
                                       {:type ~(if (compiling-cljs?)
                                                 'clara.rules.engine/ErrorResult
                                                 'clara.rules.engine.ErrorResult)
-                                       :constraints [(~'= ~gen-rule-name ~'gen-rule-name)]}]]]
+                                       :constraints [(~'= ~gen-rule-name ~'gen-rule-name)
+                                                     ~@(map ancestor-binding->restriction-form
+                                                            ancestor-bindings-in-negation-expr)]}]]]
       {:new-expression modified-expression
        :beta-with-negations beta-graph
        :production production-with-name})

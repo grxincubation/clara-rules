@@ -24,6 +24,7 @@
            [clara.rules.engine
             ISession
             ISystemFact
+            ErrorResult
             NegationResult
             NegationNode
             NegationWithJoinFilterNode]
@@ -2410,19 +2411,30 @@
 
 (deftest test-exception-handler
   (try
-    (let [negation-results (dsl/parse-query [] [[?output <- NegationResult]])
+    (let [error-results (dsl/parse-query [] [[?output <- ErrorResult]])
           session (with-exception-handler (reify eng/IExceptionHandler
                                             (handle-exception [this exception]
-                                              (clojure.stacktrace/print-cause-trace exception)))
+                                              nil))
                     (-> (mk-session 'clara.sample-ruleset
                                     'clara.exception-ruleset
-                                    [negation-results])
+                                    [error-results])
                         (insert (->Temperature 15 "MCI"))
-                        (fire-rules)))]
+                        (insert (->WindSpeed 15 "MCI"))
+                        (fire-rules)))
+          error-rule-names (->> (query session error-results)
+                                (map :?output)
+                                (map :gen-rule-name)
+                                (set))]
+      (is (= #{"clara.exception-ruleset/negation-node-exception"
+               "clara.exception-ruleset/negation-node-with-join-filter-node-exception"
+               "clara.exception-ruleset/rule-with-no-joins-binding-exception"
+               "clara.exception-ruleset/complex-nested-negation-node-exception-NegE-16"
+               "clara.exception-ruleset/complex-nested-negation-node-triggers"}))
       (is (empty? (query session exception/exception-handler-error-query))
           "Triggered rules that should not have been triggered due to encountering exceptions")
       (is (= #{{:?loc "MCI"}}
              (set (query session sample/freezing-locations)))
           "Freezing locations not found using rules namespace, exceptions should have been handled"))
     (catch Exception e
-      (clojure.stacktrace/print-cause-trace e))))
+      (clojure.stacktrace/print-cause-trace e)
+      (throw e))))

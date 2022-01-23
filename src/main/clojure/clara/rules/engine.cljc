@@ -46,14 +46,14 @@
       (defrecord NegationResult [gen-rule-name ancestor-bindings]
         ISystemFact)
 
-      (defrecord ErrorResult [gen-rule-name]
+      (defrecord ErrorResult [gen-rule-name ancestor-bindings]
         ISystemFact))
 
     :cljs
     (do
       (defrecord NegationResult [gen-rule-name ancestor-bindings])
 
-      (defrecord ErrorResult [gen-rule-name])
+      (defrecord ErrorResult [gen-rule-name ancestor-bindings])
       ;; Make NegationResult and ErrorResult a "system type" so that NegationResult
       ;; facts are special-cased when matching productions. This serves
       ;; the same purpose as implementing the ISystemFact Java interface
@@ -359,16 +359,12 @@
 (defn insert-facts!
   "Perform the fact insertion."
   [facts unconditional]
-  (if *rule-context*
-   (rhs-insert-facts! facts unconditional)
-   (lhs-insert-facts! facts)))
+  (rhs-insert-facts! facts unconditional))
 
 (defn retract-facts!
   "Perform the fact retraction."
   [facts]
-  (if *rule-context*
-   (rhs-retract-facts! facts)
-   (lhs-retract-facts! facts)))
+  (rhs-retract-facts! facts))
 
 ;; Record for the production node in the Rete network.
 (defrecord ProductionNode [id production rhs]
@@ -567,9 +563,10 @@
                                                                                  :node node
                                                                                  :fact fact
                                                                                  :env env})
-                                                   errors (map ->ErrorResult (production-names node))]
+                                                   errors (for [rule-name (production-names node)]
+                                                            (->ErrorResult rule-name {}))]
                                                (when (seq errors)
-                                                 (insert-facts! errors false))
+                                                 (lhs-insert-facts! errors))
                                                (handle-exception *exception-handler* ce)
                                                nil)))]
                        :when bindings]           ; FIXME: add env.
@@ -724,15 +721,16 @@
   [node join-filter-fn token fact fact-bindings env]
   (let [beta-bindings (try (join-filter-fn token fact fact-bindings {})
                            (catch #?(:clj Exception :cljs :default) e
-                             (let [ce (make-condition-exception {:cause e
+                             (let [bindings (:bindings token)
+                                   ce (make-condition-exception {:cause e
                                                                  :node node
                                                                  :fact fact
                                                                  :env env
-                                                                 :bindings (merge (:bindings token)
-                                                                                  fact-bindings)})
-                                   errors (map ->ErrorResult (production-names node))]
+                                                                 :bindings (merge bindings fact-bindings)})
+                                   errors (for [rule-name (production-names node)]
+                                            (->ErrorResult rule-name bindings))]
                                (when (seq errors)
-                                 (insert-facts! errors false))
+                                 (lhs-insert-facts! errors))
                                (handle-exception *exception-handler* ce)
                                nil)))]
     beta-bindings))
@@ -988,13 +986,15 @@
   (let [test-result (try
                       (test-handler token)
                       (catch #?(:clj Exception :cljs :default) e
-                        (let [ce (make-condition-exception {:cause e
+                        (let [bindings (:bindings token)
+                              ce (make-condition-exception {:cause e
                                                             :node node
                                                             :env env
-                                                            :bindings (:bindings token)})
-                              errors (map ->ErrorResult (production-names node))]
+                                                            :bindings bindings})
+                              errors (for [rule-name (production-names node)]
+                                       (->ErrorResult rule-name bindings))]
                           (when (seq errors)
-                            (insert-facts! errors false))
+                            (lhs-insert-facts! errors))
                           (handle-exception *exception-handler* ce)
                           nil)))]
     test-result))
@@ -1880,10 +1880,11 @@
                    ;; while propagating the cause.
                    (let [production (:production node)
                          rule-name (:name production)
-                         rhs (:rhs production)]
-                     (throw (ex-info (str "Exception in " (if rule-name rule-name (pr-str rhs))
-                                          " with bindings " (pr-str (:bindings token)))
-                                     {:bindings (:bindings token)
+                         rhs (:rhs production)
+                         bindings (:bindings token)
+                         ae (ex-info (str "Exception in " (if rule-name rule-name (pr-str rhs))
+                                          " with bindings " (pr-str bindings))
+                                     {:bindings bindings
                                       :name rule-name
                                       :rhs rhs
                                       :batched-logical-insertions @batched-logical-insertions
@@ -1897,7 +1898,10 @@
                                                    (catch #?(:clj Exception :cljs :default)
                                                      listener-exception
                                                      listener-exception))}
-                                     e)))))
+                                     e)
+                         error (->ErrorResult (str rule-name) bindings)]
+                     (lhs-insert-facts! [error])
+                     (handle-exception *exception-handler* ae))))
 
                ;; Explicitly flush updates if we are in a no-loop rule, so the no-loop
                ;; will be in context for child rules.
