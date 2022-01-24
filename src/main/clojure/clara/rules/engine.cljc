@@ -268,6 +268,16 @@
       (when (-> *pending-external-retractions* deref not-empty)
         (recur)))))
 
+(defn- is-error?
+  "returns true if the input value is an ::error"
+  [match-result]
+  (= match-result ::error))
+
+(defn- is-match?
+  "returns true if the input value is truthy and not an ::error"
+  [match-result]
+  (and match-result (not (is-error? match-result))))
+
 (defn- flush-updates
   "Flush all pending updates in the current session. Returns true if there were
    some items to flush, false otherwise"
@@ -568,8 +578,8 @@
                                                (when (seq errors)
                                                  (lhs-insert-facts! errors))
                                                (handle-exception *exception-handler* ce)
-                                               nil)))]
-                       :when bindings]           ; FIXME: add env.
+                                               ::error)))]
+                       :when (is-match? bindings)]           ; FIXME: add env.
                       [fact bindings]))
 
 ;; Record representing alpha nodes in the Rete network,
@@ -602,15 +612,15 @@
 
 (defrecord RootJoinNode [id condition children binding-keys]
   ILeftActivate
-  (left-activate [node join-bindings tokens memory transport listener]
+  (left-activate [node join-bindings tokens memory transport listener])
     ;; This specialized root node doesn't need to deal with the
     ;; empty token, so do nothing.
-    )
+    
 
-  (left-retract [node join-bindings tokens memory transport listener]
+  (left-retract [node join-bindings tokens memory transport listener])
     ;; The empty token can't be retracted from the root node,
     ;; so do nothing.
-    )
+    
 
   (get-join-keys [node] binding-keys)
 
@@ -732,7 +742,7 @@
                                (when (seq errors)
                                  (lhs-insert-facts! errors))
                                (handle-exception *exception-handler* ce)
-                               nil)))]
+                               ::error)))]
     beta-bindings))
 
 (defrecord ExpressionJoinNode [id condition join-filter-fn children binding-keys]
@@ -751,7 +761,7 @@
                           :let [fact (:fact element)
                                 fact-binding (:bindings element)
                                 beta-bindings (join-node-matches node join-filter-fn token fact fact-binding {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj fact-binding (:bindings token) beta-bindings)))))
 
@@ -767,7 +777,7 @@
                           :let [fact (:fact element)
                                 fact-bindings (:bindings element)
                                 beta-bindings (join-node-matches node join-filter-fn token fact fact-bindings {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj fact-bindings (:bindings token) beta-bindings)))))
 
@@ -787,7 +797,7 @@
      (platform/eager-for [token (mem/get-tokens memory node join-bindings)
                           {:keys [fact bindings] :as element} elements
                           :let [beta-bindings (join-node-matches node join-filter-fn token fact bindings {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj (:bindings token) bindings beta-bindings)))))
 
@@ -801,7 +811,7 @@
      (platform/eager-for [{:keys [fact bindings] :as element} (mem/remove-elements! memory node join-bindings elements)
                           token (mem/get-tokens memory node join-bindings)
                           :let [beta-bindings (join-node-matches node join-filter-fn token fact bindings {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj (:bindings token) bindings beta-bindings)))))
 
@@ -862,9 +872,9 @@
 (defn- matches-some-facts?
   "Returns true if the given token matches one or more of the given elements."
   [node token elements join-filter-fn condition]
-  (some (fn [{:keys [fact bindings]}]
-          (join-node-matches node join-filter-fn token fact bindings (:env condition)))
-        elements))
+  (->> (for [{:keys [fact bindings]} elements]
+         (join-node-matches node join-filter-fn token fact bindings (:env condition)))
+       (some is-match?)))
 
 ;; A specialization of the NegationNode that supports additional tests
 ;; that have to occur on the beta side of the network. The key difference between this and the simple
@@ -996,8 +1006,8 @@
                           (when (seq errors)
                             (lhs-insert-facts! errors))
                           (handle-exception *exception-handler* ce)
-                          nil)))]
-    test-result))
+                          ::error)))]
+    (is-match? test-result)))
 
 ;; The test node represents a Rete extension in which an arbitrary test condition is run
 ;; against bindings from ancestor nodes. Since this node
@@ -1438,10 +1448,13 @@
           fact-bindings (-> token :bindings (select-keys new-bindings))]
       (first (mem/get-accum-reduced memory this join-bindings (merge join-bindings fact-bindings))))))
 
-(defn- filter-accum-facts
+(defn- join-accum-facts
   "Run a filter on elements against a given token for constraints that are not simple hash joins."
   [node join-filter-fn token candidate-facts bindings]
-  (filter #(join-node-matches node join-filter-fn token % bindings {}) candidate-facts))
+  (let [matches (for [fact candidate-facts]
+                  (join-node-matches node join-filter-fn token fact bindings {}))]
+    (clojure.pprint/pprint (str "accumulated:" (vec matches)))
+    matches))
 
 ;; A specialization of the AccumulateNode that supports additional tests
 ;; that have to occur on the beta side of the network. The key difference between this and the simple
@@ -1467,9 +1480,11 @@
         (doseq [token tokens
                 [fact-bindings candidate-facts] grouped-candidate-facts
 
-                ;; Filter to items that match the incoming token, then apply the accumulator.
-                :let [filtered-facts (filter-accum-facts node join-filter-fn token candidate-facts fact-bindings)]
+                ;; Filter to items that match the incoming token, halting if there are errors, then apply the accumulator.
+                :let [joined-facts (join-accum-facts node join-filter-fn token candidate-facts fact-bindings)]
+                :when (not-any? is-error? joined-facts)
 
+                :let [filtered-facts (filter is-match? joined-facts)]
                 :when (or (seq filtered-facts)
                           ;; Even if there no filtered facts, if there are no new bindings we may
                           ;; have an initial value to propagate.
@@ -1525,7 +1540,11 @@
         (doseq [token tokens
                 [fact-bindings candidate-facts] grouped-candidate-facts
 
-                :let [filtered-facts (filter-accum-facts node join-filter-fn token candidate-facts fact-bindings)]
+                ;; Filter to items that match the incoming token, halting if there are errors, then apply the accumulator.
+                :let [joined-facts (join-accum-facts node join-filter-fn token candidate-facts fact-bindings)]
+                :when (not-any? is-error? joined-facts)
+
+                :let [filtered-facts (filter is-match? joined-facts)]
 
                 :when (or (seq filtered-facts)
                           ;; Even if there no filtered facts, if there are no new bindings an initial value
@@ -1593,14 +1612,20 @@
 
       (doseq [token matched-tokens
 
-              :let [new-filtered-facts (filter-accum-facts node join-filter-fn token candidates bindings)]
+              ;; Filter to items that match the incoming token, halting if there are errors, then apply the accumulator.
+              :let [joined-facts (join-accum-facts node join-filter-fn token candidates bindings)]
+              :when (not-any? is-error? joined-facts)
+
+              :let [new-filtered-facts (filter is-match? joined-facts)]
 
               ;; If no new elements matched the token, we don't need to do anything for this token
               ;; since the final result is guaranteed to be the same.
               :when (seq new-filtered-facts)
 
-              :let [previous-filtered-facts (filter-accum-facts node join-filter-fn token previous-candidates bindings)
+              :let [joined-facts (join-accum-facts node join-filter-fn token previous-candidates bindings)]
+              :when (not-any? is-error? joined-facts)
 
+              :let [previous-filtered-facts (filter is-match? joined-facts)
                     previous-accum-result-init (cond
                                                  (seq previous-filtered-facts)
                                                  (do-accumulate accumulator previous-filtered-facts)
@@ -1637,7 +1662,6 @@
 
                     new-converted (when (some? accum-result)
                                     (convert-return-fn accum-result))]]
-
         (cond
 
           ;; When both the new and previous result were nil do nothing.
@@ -1695,9 +1719,14 @@
       (doseq [;; Get all of the previously matched tokens so we can retract and re-send them.
               token matched-tokens
 
-              :let [previous-facts (filter-accum-facts node join-filter-fn token previous-candidates bindings)
+              :let [joined-previous-facts (join-accum-facts node join-filter-fn token previous-candidates bindings)]
+              :when (not-any? is-error? joined-previous-facts)
 
-                    new-facts (filter-accum-facts node join-filter-fn token new-candidates bindings)]
+              :let [joined-new-facts (join-accum-facts node join-filter-fn token new-candidates bindings)]
+              :when (not-any? is-error? joined-new-facts)
+
+              :let [previous-facts (filter is-match? joined-previous-facts)
+                    new-facts (filter is-match? joined-new-facts)]
 
               ;; The previous matching elements are a superset of the matching elements after retraction.
               ;; Therefore, if the counts before and after are equal nothing retracted actually matched

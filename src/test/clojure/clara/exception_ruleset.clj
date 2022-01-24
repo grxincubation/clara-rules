@@ -18,6 +18,34 @@
   =>
   (insert! (->ExceptionHandlerError "rule-with-no-joins-binding-exception rhs should never be triggered")))
 
+(defrule rule-with-bindings-test-exception
+  "Rule with bindings test exception"
+  [Temperature (= temperature ?t)]
+  [:test (throw (ex-info "fail" {:t ?t}))]
+  =>
+  (insert! (->ExceptionHandlerError "rule-with-bindings-test-exception rhs should never be triggered")))
+
+(defrule rule-with-bindings-exists-exception
+  "Rule with bindings test exception"
+  [Temperature (= location ?l) (= temperature ?t)]
+  [:exists
+    [WindSpeed (= location ?l) (throw (ex-info "fail" {:t ?t}))]]
+  =>
+  (insert! (->ExceptionHandlerError "rule-with-bindings-exists-exception rhs should never be triggered")))
+
+(defrule rule-with-bindings-accumulator-exception
+  "Rule with bindings accumulator exception"
+  [Temperature (= location ?l) (= temperature ?t)]
+  [?wind-seq <- (acc/all) :from [WindSpeed (= location ?l) (throw (ex-info "fail" {:t ?t}))]]
+  =>
+  (insert! (->ExceptionHandlerError (str "rule-with-bindings-accumulator-exception rhs should never be triggered: " ?wind-seq))))
+
+(defrule rule-with-no-joins-accumulator-exception
+  "Rule with no joins accumulator exception"
+  [?temp-seq <- (acc/all) :from [Temperature (= temperature ?t) (throw (ex-info "fail" {:t ?t}))]]
+  =>
+  (insert! (->ExceptionHandlerError "rule-with-no-joins-accumulator-exception rhs should never be triggered")))
+
 (defrule negation-node-exception
   "Rule using NegationNode"
   [:not [Temperature (= temperature (throw (ex-info "fail" {:t temperature})))]]

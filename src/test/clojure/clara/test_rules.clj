@@ -2414,6 +2414,7 @@
     (let [error-results (dsl/parse-query [] [[?output <- ErrorResult]])
           session (with-exception-handler (reify eng/IExceptionHandler
                                             (handle-exception [this exception]
+                                              ;;;(clojure.stacktrace/print-cause-trace exception)
                                               nil))
                     (-> (mk-session 'clara.sample-ruleset
                                     'clara.exception-ruleset
@@ -2429,7 +2430,11 @@
                "clara.exception-ruleset/negation-node-with-join-filter-node-exception"
                "clara.exception-ruleset/rule-with-no-joins-binding-exception"
                "clara.exception-ruleset/complex-nested-negation-node-exception-NegE-16"
-               "clara.exception-ruleset/complex-nested-negation-node-triggers"}))
+               "clara.exception-ruleset/complex-nested-negation-node-triggers"
+               "clara.exception-ruleset/rule-with-bindings-test-exception"
+               "clara.exception-ruleset/rule-with-bindings-exists-exception"
+               "clara.exception-ruleset/rule-with-bindings-accumulator-exception"})
+          "Missing ErrorResult for rules that should have had an error")
       (is (empty? (query session exception/exception-handler-error-query))
           "Triggered rules that should not have been triggered due to encountering exceptions")
       (is (= #{{:?loc "MCI"}}
