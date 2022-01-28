@@ -705,16 +705,17 @@
 (defn- join-node-matches
   [node join-filter-fn token fact fact-bindings env]
   (let [beta-bindings (try (join-filter-fn token fact fact-bindings {})
-                           (catch #?(:clj Exception :cljs :default) e
-                             (let [bindings (:bindings token)
-                                   ce (make-condition-exception {:cause e
-                                                                 :node node
-                                                                 :fact fact
-                                                                 :env env
-                                                                 :bindings (merge bindings fact-bindings)})]
-                               (handle-exception *exception-handler* ce)
-                               ::error)))]
-    beta-bindings))
+                        (catch #?(:clj Exception :cljs :default) e
+                          (let [bindings (:bindings token)
+                                ce (make-condition-exception {:cause e
+                                                              :node node
+                                                              :fact fact
+                                                              :env env
+                                                              :bindings (merge bindings fact-bindings)})]
+                            (handle-exception *exception-handler* ce)
+                            ::error)))]
+    (when (is-match? beta-bindings)
+      beta-bindings)))
 
 (defrecord ExpressionJoinNode [id condition join-filter-fn children binding-keys]
   ILeftActivate
@@ -1865,8 +1866,8 @@
                            ;; while propagating the cause.
                            (let [production (:production node)
                                  rule-name (:name production)
-                                 rhs (:rhs production)]
-                             (throw (ex-info (str "Exception in " (if rule-name rule-name (pr-str rhs))
+                                 rhs (:rhs production)
+                                 ae (ex-info (str "Exception in " (if rule-name rule-name (pr-str rhs))
                                                   " with bindings " (pr-str (:bindings token)))
                                              {:bindings (:bindings token)
                                               :name rule-name
@@ -1880,9 +1881,10 @@
                                                                []
                                                                (l/get-children p-listener)))
                                                            (catch #?(:clj Exception :cljs :default)
-                                                               listener-exception
+                                                             listener-exception
                                                              listener-exception))}
-                                             e)))))
+                                             e)]
+                                    (handle-exception *exception-handler* ae))))
 
                   ;; Explicitly flush updates if we are in a no-loop rule, so the no-loop
                   ;; will be in context for child rules.
