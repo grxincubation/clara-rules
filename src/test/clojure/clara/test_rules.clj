@@ -1,6 +1,7 @@
 (ns clara.test-rules
   (:require [clara.sample-ruleset :as sample]
             [clara.other-ruleset :as other]
+            [clara.exception-ruleset :as exception]
             [clara.rules.test-rules-data :as rules-data]
             [clara.rules :refer :all]
             [clojure.test :refer :all]
@@ -2403,3 +2404,24 @@
                                                                :name :clara.rules.test-rules-data/is-cold-and-windy-data
                                                                :lhs  []
                                                                :rhs  '(println "I have no meaning outside of this test")}))) {})))
+
+(deftest test-exception-handler
+  (try
+    (let [session (with-exception-handler (reify eng/IExceptionHandler
+                                            (handle-exception [this exception]
+                                              ;;;(clojure.stacktrace/print-cause-trace exception)
+                                              nil))
+                    (-> (mk-session 'clara.sample-ruleset
+                                    'clara.exception-ruleset)
+                        (insert (->Temperature 15 "MCI"))
+                        (insert (->WindSpeed 15 "MCI"))
+                        (insert (->WindSpeed 30 "MCI"))
+                        (fire-rules)))]
+      (is (empty? (query session exception/exception-handler-error-query))
+          "Triggered rules that should not have been triggered due to encountering exceptions")
+      (is (= #{{:?loc "MCI"}}
+             (set (query session sample/freezing-locations)))
+          "Freezing locations not found using rules namespace, exceptions should have been handled"))
+    (catch Exception e
+      (clojure.stacktrace/print-cause-trace e)
+      (throw e))))

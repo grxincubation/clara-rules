@@ -228,6 +228,19 @@
 ;; The token that triggered a rule to fire.
 (def ^:dynamic *rule-context* nil)
 
+;; Protocol for handling exceptions encountered during evaluation of expressions and actions
+(defprotocol IExceptionHandler
+  (handle-exception [this exception]))
+
+;; Default implementation of an exception handler which just throws the exception
+(deftype ThrowingExceptionHandler []
+  IExceptionHandler
+  (handle-exception [this exception]
+    (throw exception)))
+
+;; The default exception handler
+(def ^:dynamic *exception-handler* (ThrowingExceptionHandler.))
+
 (defn ^:private external-retract-loop
   "Retract all facts, then group and retract all facts that must be logically retracted because of these
    retractions, and so forth, until logical consistency is reached.  When an external retraction causes multiple
@@ -248,6 +261,16 @@
         (alpha-retract root fact-group memory transport listener))
       (when (-> *pending-external-retractions* deref not-empty)
         (recur)))))
+
+(defn- is-error?
+  "returns true if the input value is an ::error"
+  [match-result]
+  (= match-result ::error))
+
+(defn- is-match?
+  "returns true if the input value is truthy and not an ::error"
+  [match-result]
+  (and match-result (not (is-error? match-result))))
 
 (defn- flush-updates
   "Flush all pending updates in the current session. Returns true if there were
@@ -486,7 +509,7 @@
       production-section
       query-section])))
 
-(defn- throw-condition-exception
+(defn- make-condition-exception
   "Adds a useful error message when executing a constraint node raises an exception."
   [{:keys [cause node fact env bindings] :as args}]
   (let [bindings-description (if (empty? bindings)
@@ -504,23 +527,34 @@
                                 (map-indexed single-condition-message)
                                 (string/join "\n"))
         message (str message-header "\n" condition-messages)]
-    (throw (ex-info message
-                    {:fact fact
-                     :bindings bindings
-                     :env env
-                     :conditions-and-rules conditions-and-rules}
-                    cause))))
+    (ex-info message
+             {:fact fact
+              :bindings bindings
+              :env env
+              :conditions-and-rules conditions-and-rules}
+             cause)))
+
+(defn- production-names
+  [node]
+  (->> (get-conditions-and-rule-names node)
+       (vals)
+       (reduce into [])
+       (map second)
+       (map str)
+       (set)))
 
 (defn- alpha-node-matches
   [facts env activation node]
   (platform/eager-for [fact facts
                        :let [bindings (try (activation fact env)
                                            (catch #?(:clj Exception :cljs :default) e
-                                               (throw-condition-exception {:cause e
-                                                                           :node node
-                                                                           :fact fact
-                                                                           :env env})))]
-                       :when bindings]           ; FIXME: add env.
+                                             (let [ce (make-condition-exception {:cause e
+                                                                                 :node node
+                                                                                 :fact fact
+                                                                                 :env env})]
+                                               (handle-exception *exception-handler* ce)
+                                               ::error)))]
+                       :when (is-match? bindings)]           ; FIXME: add env.
                       [fact bindings]))
 
 ;; Record representing alpha nodes in the Rete network,
@@ -672,12 +706,14 @@
   [node join-filter-fn token fact fact-bindings env]
   (let [beta-bindings (try (join-filter-fn token fact fact-bindings {})
                            (catch #?(:clj Exception :cljs :default) e
-                               (throw-condition-exception {:cause e
-                                                           :node node
-                                                           :fact fact
-                                                           :env env
-                                                           :bindings (merge (:bindings token)
-                                                                            fact-bindings)})))]
+                             (let [bindings (:bindings token)
+                                   ce (make-condition-exception {:cause e
+                                                                 :node node
+                                                                 :fact fact
+                                                                 :env env
+                                                                 :bindings (merge bindings fact-bindings)})]
+                               (handle-exception *exception-handler* ce)
+                               ::error)))]
     beta-bindings))
 
 (defrecord ExpressionJoinNode [id condition join-filter-fn children binding-keys]
@@ -696,7 +732,7 @@
                           :let [fact (:fact element)
                                 fact-binding (:bindings element)
                                 beta-bindings (join-node-matches node join-filter-fn token fact fact-binding {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj fact-binding (:bindings token) beta-bindings)))))
 
@@ -712,7 +748,7 @@
                           :let [fact (:fact element)
                                 fact-bindings (:bindings element)
                                 beta-bindings (join-node-matches node join-filter-fn token fact fact-bindings {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj fact-bindings (:bindings token) beta-bindings)))))
 
@@ -732,7 +768,7 @@
      (platform/eager-for [token (mem/get-tokens memory node join-bindings)
                           {:keys [fact bindings] :as element} elements
                           :let [beta-bindings (join-node-matches node join-filter-fn token fact bindings {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj (:bindings token) bindings beta-bindings)))))
 
@@ -746,7 +782,7 @@
      (platform/eager-for [{:keys [fact bindings] :as element} (mem/remove-elements! memory node join-bindings elements)
                           token (mem/get-tokens memory node join-bindings)
                           :let [beta-bindings (join-node-matches node join-filter-fn token fact bindings {})]
-                          :when beta-bindings]
+                          :when (is-match? beta-bindings)]
                          (->Token (conj (:matches token) [fact id])
                                   (conj (:bindings token) bindings beta-bindings)))))
 
@@ -931,11 +967,14 @@
   (let [test-result (try
                       (test-handler token)
                       (catch #?(:clj Exception :cljs :default) e
-                        (throw-condition-exception {:cause e
-                                                    :node node
-                                                    :env env
-                                                    :bindings (:bindings token)})))]
-    test-result))
+                        (let [bindings (:bindings token)
+                              ce (make-condition-exception {:cause e
+                                                            :node node
+                                                            :env env
+                                                            :bindings bindings})]
+                          (handle-exception *exception-handler* ce)
+                          ::error)))]
+    (is-match? test-result)))
 
 ;; The test node represents a Rete extension in which an arbitrary test condition is run
 ;; against bindings from ancestor nodes. Since this node

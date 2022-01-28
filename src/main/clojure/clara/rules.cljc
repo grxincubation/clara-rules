@@ -429,3 +429,9 @@ See the [query authoring documentation](http://www.clara-rules.org/docs/queries/
                                   )]
          (doseq [psym production-syms]
            (ns-unmap *ns* psym))))))
+
+#?(:clj
+   (defmacro with-exception-handler
+     [exception-handler & body]
+     `(binding [eng/*exception-handler* ~exception-handler]
+        ~@body)))
