@@ -42,9 +42,11 @@
 
 (defrule rule-with-no-joins-accumulator-exception
   "Rule with no joins accumulator exception"
-  [?temp-seq <- (acc/all) :from [Temperature (= temperature ?t) (throw (ex-info "fail" {:t ?t}))]]
+  [?wind-seq <- (acc/all) :from [WindSpeed (= location ?l) (if (= windspeed 30)
+                                                             (throw (ex-info "fail" {:l ?l}))
+                                                             true)]]
   =>
-  (insert! (->ExceptionHandlerError "rule-with-no-joins-accumulator-exception rhs should never be triggered")))
+  (insert! (->ExceptionHandlerError (str "rule-with-no-joins-accumulator-exception rhs should never be triggered: " ?wind-seq))))
 
 (defrule negation-node-exception
   "Rule using NegationNode"
