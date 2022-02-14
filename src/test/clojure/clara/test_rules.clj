@@ -2417,11 +2417,11 @@
                         (insert (->WindSpeed 15 "MCI"))
                         (insert (->WindSpeed 30 "MCI"))
                         (fire-rules)))]
-      (is (empty? (query session exception/exception-handler-error-query))
-          "Triggered rules that should not have been triggered due to encountering exceptions")
       (is (= #{{:?loc "MCI"}}
              (set (query session sample/freezing-locations)))
-          "Freezing locations not found using rules namespace, exceptions should have been handled"))
+          "Freezing locations not found using rules namespace, exceptions should have been handled")
+      (is (empty? (query session exception/exception-handler-error-query))
+          "Triggered rules that should not have been triggered due to encountering exceptions"))
     (catch Exception e
       (clojure.stacktrace/print-cause-trace e)
       (throw e))))

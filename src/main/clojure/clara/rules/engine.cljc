@@ -714,8 +714,7 @@
                                                               :bindings (merge bindings fact-bindings)})]
                             (handle-exception *exception-handler* ce)
                             ::error)))]
-    (when (is-match? beta-bindings)
-      beta-bindings)))
+    beta-bindings))
 
 (defrecord ExpressionJoinNode [id condition join-filter-fn children binding-keys]
   ILeftActivate
@@ -844,9 +843,10 @@
 (defn- matches-some-facts?
   "Returns true if the given token matches one or more of the given elements."
   [node token elements join-filter-fn condition]
-  (some (fn [{:keys [fact bindings]}]
-          (join-node-matches node join-filter-fn token fact bindings (:env condition)))
-        elements))
+  (let [joined (for [{:keys [fact bindings]} elements]
+                 (join-node-matches node join-filter-fn token fact bindings (:env condition)))]
+    (and (some is-match? joined)
+         (not-any? is-error? joined))))
 
 ;; A specialization of the NegationNode that supports additional tests
 ;; that have to occur on the beta side of the network. The key difference between this and the simple
@@ -1419,7 +1419,14 @@
 (defn- filter-accum-facts
   "Run a filter on elements against a given token for constraints that are not simple hash joins."
   [node join-filter-fn token candidate-facts bindings]
-  (filter #(join-node-matches node join-filter-fn token % bindings {}) candidate-facts))
+  (let [is-error? (comp is-error? :result)
+        is-match? (comp is-match? :result)
+        maybe-matches (for [fact candidate-facts]
+                        {:fact fact
+                         :result (join-node-matches node join-filter-fn token fact bindings {})})]
+    (when (not-any? is-error? maybe-matches)
+      (->> (filter is-match? maybe-matches)
+           (map :fact)))))
 
 ;; A specialization of the AccumulateNode that supports additional tests
 ;; that have to occur on the beta side of the network. The key difference between this and the simple
