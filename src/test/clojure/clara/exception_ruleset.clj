@@ -73,11 +73,11 @@
 
 (defrule complex-nested-negation-node-triggers
   "Rule using complex nested NegationNode which triggers but fails rhs"
-  [Temperature (= location ?l) (= temperature ?t)]
+  [Temperature (= location ?l)]
   [:not [:and
          [WindSpeed (not= location ?l)]]]
   =>
-  (throw (ex-info "fail" {:t ?t}))
+  (throw (ex-info "fail" {:l :l}))
   (insert! (->ExceptionHandlerError "complex-nested-negation-node-triggers rhs is triggered but exception is encountered")))
 
 (defrule negation-node-with-join-filter-node-exception
