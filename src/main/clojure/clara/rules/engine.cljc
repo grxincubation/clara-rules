@@ -144,30 +144,54 @@
   (retract-elements [transport memory listener nodes elements])
   (retract-tokens [transport memory listener nodes tokens]))
 
+(defprotocol NodeResult
+  (node-error? [result]))
+
+(defn is-error?
+  "returns true if the input value is an ::error"
+  [result]
+  (if (satisfies? NodeResult result)
+    (node-error? result)
+    (::error result)))
+
+(defn is-match?
+  "returns true if the input value is truthy and not an ::error"
+  [result]
+  (and result (not (is-error? result))))
+
+(extend-protocol NodeResult
+  Element
+  (node-error? [{:keys [bindings]}]
+    (is-error? bindings))
+  Token
+  (node-error? [{:keys [bindings]}]
+    (is-error? bindings)))
+
 (defn- propagate-items-to-nodes [transport memory listener nodes items propagate-fn]
-  (doseq [node nodes
-          :let [join-keys (get-join-keys node)]]
+  (when (not-any? is-error? items)
+    (doseq [node nodes
+            :let [join-keys (get-join-keys node)]]
 
-    (if (pos? (count join-keys))
+      (if (pos? (count join-keys))
 
-      ;; Group by the join keys for the activation.
-      (doseq [[join-bindings item-group] (platform/group-by-seq #(select-keys (:bindings %) join-keys) items)]
-        (propagate-fn node
-                      join-bindings
-                      item-group
-                      memory
-                      transport
-                      listener))
+        ;; Group by the join keys for the activation.
+        (doseq [[join-bindings item-group] (platform/group-by-seq #(select-keys (:bindings %) join-keys) items)]
+          (propagate-fn node
+                        join-bindings
+                        item-group
+                        memory
+                        transport
+                        listener))
 
-      ;; The node has no join keys, so just send everything at once
-      ;; (if there is something to send.)
-      (when (seq items)
-        (propagate-fn node
-                      {}
-                      items
-                      memory
-                      transport
-                      listener)))))
+        ;; The node has no join keys, so just send everything at once
+        ;; (if there is something to send.)
+        (when (seq items)
+          (propagate-fn node
+                        {}
+                        items
+                        memory
+                        transport
+                        listener))))))
 
 ;; Simple, in-memory transport.
 (deftype LocalTransport []
@@ -262,29 +286,6 @@
       (when (-> *pending-external-retractions* deref not-empty)
         (recur)))))
 
-(defprotocol NodeResult
-  (node-error? [result]))
-
-(defn is-error?
-  "returns true if the input value is an ::error"
-  [result]
-  (if (satisfies? NodeResult result)
-    (node-error? result)
-    (::error result)))
-
-(defn is-match?
-  "returns true if the input value is truthy and not an ::error"
-  [result]
-  (and result (not (is-error? result))))
-
-(extend-protocol NodeResult
-  Element
-  (node-error? [{:keys [bindings]}]
-    (is-error? bindings))
-  Token
-  (node-error? [{:keys [bindings]}]
-    (is-error? bindings)))
-
 (defn- flush-updates
   "Flush all pending updates in the current session. Returns true if there were
    some items to flush, false otherwise"
@@ -372,7 +373,6 @@
 (defrecord ProductionNode [id production rhs]
   ILeftActivate
   (left-activate [node join-bindings tokens memory transport listener]
-
     ;; Provide listeners information on all left-activate calls,
     ;; but we don't store these tokens in the beta-memory since the production-memory
     ;; and activation-memory collectively contain all information that ProductionNode
@@ -1084,72 +1084,73 @@
 (defrecord AccumulateNode [id accum-condition accumulator result-binding children binding-keys new-bindings]
   ILeftActivate
   (left-activate [node join-bindings tokens memory transport listener]
-    (l/left-activate! listener node tokens)
-    (let [previous-results (mem/get-accum-reduced-all memory node join-bindings)
-          convert-return-fn (:convert-return-fn accumulator)
-          has-matches? (seq previous-results)
-          initial-value (when-not has-matches?
-                          (:initial-value accumulator))
-          initial-converted (when (some? initial-value)
-                              (convert-return-fn initial-value))]
+    (when (not-any? is-error? tokens)
+      (l/left-activate! listener node tokens)
+      (let [previous-results (mem/get-accum-reduced-all memory node join-bindings)
+            convert-return-fn (:convert-return-fn accumulator)
+            has-matches? (seq previous-results)
+            initial-value (when-not has-matches?
+                            (:initial-value accumulator))
+            initial-converted (when (some? initial-value)
+                                (convert-return-fn initial-value))]
 
-      (mem/add-tokens! memory node join-bindings tokens)
+        (mem/add-tokens! memory node join-bindings tokens)
 
-      (cond
-        ;; If there are previously accumulated results to propagate, use them.  If this is the
-        ;; first time there are matching tokens, then the reduce will have to happen for the
-        ;; first time.  However, this reduce operation is independent of the specific tokens
-        ;; since the elements join to the tokens via pre-computed hash join bindings for this
-        ;; node.  So only reduce once per binding grouped facts, for all tokens. This includes
-        ;; all bindings, not just the join bindings.
-        has-matches?
-        (doseq [[fact-bindings [previous previous-reduced]] previous-results
-                :let [first-reduce? (= ::not-reduced previous-reduced)
-                      previous-reduced (if first-reduce?
-                                         ;; Need to accumulate since this is the first time we have
-                                         ;; tokens matching so we have not accumulated before.
-                                         (do-accumulate accumulator previous)
-                                         previous-reduced)
-                      accum-reduced (when first-reduce?
-                                      ^::accum-node [previous previous-reduced])
-                      converted (when (some? previous-reduced)
-                                  (convert-return-fn previous-reduced))]]
+        (cond
+          ;; If there are previously accumulated results to propagate, use them.  If this is the
+          ;; first time there are matching tokens, then the reduce will have to happen for the
+          ;; first time.  However, this reduce operation is independent of the specific tokens
+          ;; since the elements join to the tokens via pre-computed hash join bindings for this
+          ;; node.  So only reduce once per binding grouped facts, for all tokens. This includes
+          ;; all bindings, not just the join bindings.
+          has-matches?
+          (doseq [[fact-bindings [previous previous-reduced]] previous-results
+                  :let [first-reduce? (= ::not-reduced previous-reduced)
+                        previous-reduced (if first-reduce?
+                                           ;; Need to accumulate since this is the first time we have
+                                           ;; tokens matching so we have not accumulated before.
+                                           (do-accumulate accumulator previous)
+                                           previous-reduced)
+                        accum-reduced (when first-reduce?
+                                        ^::accum-node [previous previous-reduced])
+                        converted (when (some? previous-reduced)
+                                    (convert-return-fn previous-reduced))]]
 
-          ;; Newly accumulated results need to be added to memory.
-          (when first-reduce?
-            (l/add-accum-reduced! listener node join-bindings accum-reduced fact-bindings)
-            (mem/add-accum-reduced! memory node join-bindings accum-reduced fact-bindings))
+            ;; Newly accumulated results need to be added to memory.
+            (when first-reduce?
+              (l/add-accum-reduced! listener node join-bindings accum-reduced fact-bindings)
+              (mem/add-accum-reduced! memory node join-bindings accum-reduced fact-bindings))
 
-          (when (some? converted)
+            (when (some? converted)
+              (doseq [token tokens]
+                (send-accumulated node accum-condition accumulator result-binding token converted fact-bindings
+                                  transport memory listener))))
+
+          ;; There are no previously accumulated results, but we still may need to propagate things
+          ;; such as a sum of zero items.
+          ;; If an initial value is provided and the converted value is non-nil, we can propagate
+          ;; the converted value as the accumulated item.
+          (and (some? initial-converted)
+               (empty? new-bindings))
+
+          ;; Note that this is added to memory a single time for all matching tokens because the memory
+          ;; location doesn't depend on bindings from individual tokens.
+
+          (let [accum-reduced ^::accum-node [[] initial-value]]
+            ;; The fact-bindings are normally a superset of the join-bindings.  We have no fact-bindings
+            ;; that are not join-bindings in this case since we have verified that new-bindings is empty.
+            ;; Therefore the join-bindings and fact-bindings are exactly equal.
+            (l/add-accum-reduced! listener node join-bindings accum-reduced join-bindings)
+            (mem/add-accum-reduced! memory node join-bindings accum-reduced join-bindings)
+
+            ;; Send the created accumulated item to the children for each token.
             (doseq [token tokens]
-              (send-accumulated node accum-condition accumulator result-binding token converted fact-bindings
-                                transport memory listener))))
+              (send-accumulated node accum-condition accumulator result-binding token initial-converted {}
+                                transport memory listener)))
 
-        ;; There are no previously accumulated results, but we still may need to propagate things
-        ;; such as a sum of zero items.
-        ;; If an initial value is provided and the converted value is non-nil, we can propagate
-        ;; the converted value as the accumulated item.
-        (and (some? initial-converted)
-             (empty? new-bindings))
-
-        ;; Note that this is added to memory a single time for all matching tokens because the memory
-        ;; location doesn't depend on bindings from individual tokens.
-
-        (let [accum-reduced ^::accum-node [[] initial-value]]
-          ;; The fact-bindings are normally a superset of the join-bindings.  We have no fact-bindings
-          ;; that are not join-bindings in this case since we have verified that new-bindings is empty.
-          ;; Therefore the join-bindings and fact-bindings are exactly equal.
-          (l/add-accum-reduced! listener node join-bindings accum-reduced join-bindings)
-          (mem/add-accum-reduced! memory node join-bindings accum-reduced join-bindings)
-
-          ;; Send the created accumulated item to the children for each token.
-          (doseq [token tokens]
-            (send-accumulated node accum-condition accumulator result-binding token initial-converted {}
-                              transport memory listener)))
-
-        ;; Propagate nothing if the above conditions don't apply.
-        :else
-        nil)))
+          ;; Propagate nothing if the above conditions don't apply.
+          :else
+          nil))))
 
   (left-retract [node join-bindings tokens memory transport listener]
     (l/left-retract! listener node tokens)
@@ -1201,10 +1202,11 @@
 
   IAccumRightActivate
   (pre-reduce [node elements]
-    (println "pre-reduce accumulator: ")
-    ;; Return a seq tuples with the form [binding-group facts-from-group-elements].
-    (platform/eager-for [[bindings element-group] (platform/group-by-seq :bindings elements)]
-      [bindings (mapv :fact element-group)]))
+    (when (not-any? is-error? elements)
+      ;; Return a seq tuples with the form [binding-group facts-from-group-elements].
+      (platform/eager-for [[bindings element-group] (platform/group-by-seq :bindings elements)
+                           :when (is-match? bindings)]
+        [bindings (mapv :fact element-group)])))
 
   (right-activate-reduced [node join-bindings fact-seq memory transport listener]
     (println "right-activate-reduced accumulator: ")
@@ -1302,7 +1304,7 @@
 
   IRightActivate
   (right-activate [node join-bindings elements memory transport listener]
-
+    (println "right-activate accumulator: ")
     (l/right-activate! listener node elements)
     ;; Simple right-activate implementation simple defers to
     ;; accumulator-specific logic.
@@ -1315,7 +1317,6 @@
      listener))
 
   (right-retract [node join-bindings elements memory transport listener]
-
     (l/right-retract! listener node elements)
 
     (doseq [:let [convert-return-fn (:convert-return-fn accumulator)
@@ -1583,11 +1584,12 @@
 
   IAccumRightActivate
   (pre-reduce [node elements]
-    ;; Return a map of bindings to the candidate facts that match them. This accumulator
-    ;; depends on the values from parent facts, so we defer actually running the accumulator
-    ;; until we have a token.
-    (platform/eager-for [[bindings element-group] (platform/group-by-seq :bindings elements)]
-                        [bindings (map :fact element-group)]))
+    (when (not-any? is-error? elements)
+      ;; Return a map of bindings to the candidate facts that match them. This accumulator
+      ;; depends on the values from parent facts, so we defer actually running the accumulator
+      ;; until we have a token.
+      (platform/eager-for [[bindings element-group] (platform/group-by-seq :bindings elements)]
+                          [bindings (map :fact element-group)])))
 
   (right-activate-reduced [node join-bindings binding-candidates-seq memory transport listener]
 
