@@ -6,6 +6,7 @@
             [clojure.string :as string]
             [clara.rules.memory :as mem]
             [clara.rules.listener :as l]
+            #?(:clj [logging.core :as log])
             #?(:clj [clara.rules.platform :as platform]
                :cljs [clara.rules.platform :as platform :include-macros true])
             [clara.rules.update-cache.core :as uc]
@@ -144,10 +145,18 @@
   (retract-elements [transport memory listener nodes elements])
   (retract-tokens [transport memory listener nodes tokens]))
 
+(def counter (atom 0))
+
 (defn- propagate-items-to-nodes [transport memory listener nodes items propagate-fn]
   (doseq [node nodes
           :let [join-keys (get-join-keys node)]]
-
+    #?(:clj
+       (if (Thread/interrupted)
+         (do
+          (spit "/Users/jose.gomez/code/clara.txt" (format "interrupted!!! %s at %s\n" (swap! counter inc) (java.time.LocalDateTime/now)) :append true)
+          (throw (InterruptedException. "fire rules interrupted.")))
+         (do
+          (spit "/Users/jose.gomez/code/clara.txt" (format "not interrupted!!! %s at %s\n" (swap! counter inc) (java.time.LocalDateTime/now)) :append true))))
     (if (pos? (count join-keys))
 
       ;; Group by the join keys for the activation.
@@ -1761,9 +1770,6 @@
 
     (loop [next-group (mem/next-activation-group transient-memory)
            last-group nil]
-      #?(:clj
-         (when (Thread/interrupted)
-           (throw (InterruptedException. "fire rules interrupted."))))
       (if next-group
 
         (if (and last-group (not= last-group next-group))

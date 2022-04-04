@@ -4,6 +4,7 @@
   :license {:name "Apache License Version 2.0"
             :url "https://www.apache.org/licenses/LICENSE-2.0"}
   :dependencies [[org.clojure/clojure "1.7.0"]
+                 [com.gateless/logging "0.1.8"]
                  [prismatic/schema "1.1.6"]]
   :profiles {:dev {:dependencies [[org.clojure/math.combinatorics "0.1.3"]
                                   [org.clojure/data.fressian "0.2.1"]]
