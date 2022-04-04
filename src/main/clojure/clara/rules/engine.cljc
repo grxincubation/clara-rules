@@ -1762,7 +1762,7 @@
     (loop [next-group (mem/next-activation-group transient-memory)
            last-group nil]
       #?(:clj
-         (when (.isInterrupted (Thread/currentThread))
+         (when (Thread/interrupted)
            (throw (InterruptedException. "fire rules interrupted."))))
       (if next-group
 

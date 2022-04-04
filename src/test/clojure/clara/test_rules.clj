@@ -2345,6 +2345,23 @@
                     (fire-rules {:cancelling true})
                     (query cold-query))))))
 
+(deftest test-abort-interrupted
+  (let [cold-query (dsl/parse-query [] [[Cold (= ?t temperature)]])
+        add-cold-rule (dsl/parse-rule [[Cold]]
+                                      (do
+                                       (insert! (->Cold -10))))
+        session (mk-session [add-cold-rule cold-query] :cache false)
+        ^java.util.concurrent.Future result-f (future
+                                                (-> session
+                                                    (insert (->Cold -20))
+                                                    (fire-rules)
+                                                    (query cold-query)))]
+    (try
+      (.get result-f 100 java.util.concurrent.TimeUnit/MILLISECONDS)
+      (catch java.util.concurrent.TimeoutException e
+        (.cancel result-f true)
+        (is (thrown? java.util.concurrent.CancellationException (.get result-f)))))))
+
 ;; Partial test for https://github.com/cerner/clara-rules/issues/267
 ;; This test has a counterpart of the same name in clara.test-bindings.  Once
 ;; we land on a strategy for error checking tests in ClojureScript we can move this
