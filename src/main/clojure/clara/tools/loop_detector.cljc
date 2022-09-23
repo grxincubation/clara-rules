@@ -1,7 +1,9 @@
 (ns clara.tools.loop-detector
   (:require [clara.rules.listener :as l]
+            [clara.rules.memory :as mem]
             [clara.rules.engine :as eng]
-            [clara.tools.tracing :as trace]))
+            [clara.tools.tracing :as trace])
+  (:import [clara.rules.engine LocalSession]))
 
 ;; Although we use a single type here note that the cycles-count and the on-limit-delay fields
 ;; will be nil during the persistent state of the listener.
@@ -55,12 +57,26 @@
     ;; something etc., in which case we don't want to spam the user's logs.
     (CyclicalRuleListener. (atom 0) max-cycles on-limit-fn (delay (on-limit-fn)))))
 
+(defn mk-debug-artifacts
+  []
+  (let [{:keys [rulebase transient-memory transport listener get-alphas-fn]} eng/*current-session*
+        persistent-listener (l/to-persistent! listener)
+        trace (trace/listener->trace persistent-listener)
+        session (LocalSession. rulebase
+                               (mem/to-persistent! transient-memory)
+                               transport
+                               persistent-listener
+                               get-alphas-fn
+                               [])]
+    (cond-> nil
+      trace (assoc :trace trace)
+      session (assoc :session session))))
+
 (defn throw-exception-on-max-cycles
   []
-  (let [trace (trace/listener->trace (l/to-persistent! (:listener eng/*current-session*)))]
-    (throw (ex-info "Reached maximum activation group transitions threshhold; an infinite loop is suspected"
-                    (cond-> {:clara-rules/infinite-loop-suspected true}
-                      trace (assoc :trace trace))))))
+  (throw (ex-info "Reached maximum activation group transitions threshhold; an infinite loop is suspected"
+                  (merge (mk-debug-artifacts)
+                         {:clara-rules/infinite-loop-suspected true}))))
 
 (defn ->standard-out-warning
   []
